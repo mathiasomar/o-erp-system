@@ -1,0 +1,795 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ── Enums ─────────────────────────────────────────────────────────────────────
+
+enum UserRole {
+  ADMIN
+  MANAGER
+  CASHIER
+}
+
+enum OrderStatus {
+  PENDING
+  COMPLETED
+  CANCELLED
+  VOIDED
+}
+
+enum PaymentMethod {
+  CASH
+  MPESA
+  CARD
+}
+
+enum StockAdjustmentReason {
+  RESTOCK
+  MANUAL_INCREASE
+  MANUAL_DECREASE
+  DAMAGED
+  RETURNED
+  EXPIRED
+  PURCHASE_RECEIVED // ← new: stock received via purchase invoice
+  PURCHASE_RETURN // ← new: stock returned to supplier via purchase return
+}
+
+enum ExpensePaymentMethod {
+  CASH
+  MPESA
+  CARD
+  BANK_TRANSFER
+}
+
+enum ExpenseFrequency {
+  ONE_TIME
+  DAILY
+  WEEKLY
+  MONTHLY
+  YEARLY
+}
+
+enum ActivityAction {
+  ORDER_CREATED
+  ORDER_CANCELLED
+  ORDER_COMPLETED
+  PRODUCT_CREATED
+  PRODUCT_UPDATED
+  PRODUCT_DELETED
+  EXPENSE_CREATED
+  EXPENSE_UPDATED
+  EXPENSE_DELETED
+  STOCK_ADJUSTED
+  STOCK_BULK_ADJUSTED
+  USER_CREATED
+  USER_UPDATED
+  USER_ROLE_CHANGED
+  USER_ACTIVATED
+  USER_DEACTIVATED
+  USER_LOGIN
+  USER_LOGOUT
+  USER_DELETE
+  SETTINGS_UPDATED
+  PERMISSIONS_UPDATED
+  CATEGORY_CREATED
+  CATEGORY_UPDATED
+  CATEGORY_DELETED
+  BRANCH_CREATED
+  BRANCH_UPDATED
+  BRANCH_USER_ASSIGNED
+  CUSTOMER_CREATED
+  CUSTOMER_UPDATED
+  RECEIPT_VOIDED
+  RECEIPT_COMBINED
+  RECEIPT_REPRINTED
+  USER_DELETED
+  SUPPLIER_CREATED
+  SUPPLIER_UPDATED
+  PURCHASE_CREATED
+  PURCHASE_RECEIVED
+  PURCHASE_CANCELLED
+}
+
+enum NotificationType {
+  NEW_ORDER
+  ORDER_CANCELLED
+  LOW_STOCK
+  OUT_OF_STOCK
+  MPESA_PENDING
+  MPESA_SUCCESS
+  MPESA_FAILED
+  EXPENSE_ADDED
+  USER_ACTION
+  SYSTEM
+}
+
+enum LoyaltyLogType {
+  EARNED
+  REDEEMED
+  ADJUSTED
+  EXPIRED
+}
+
+enum LayawayStatus {
+  ACTIVE // deposit paid, product held
+  COMPLETED // fully paid, order completed
+  EXPIRED // time ran out, stock returned
+  CANCELLED // manually cancelled
+}
+
+enum ReceiptStatus {
+  ACTIVE // normal, valid receipt
+  VOIDED // voided — stock returned
+  COMBINED // this receipt was merged into another
+  DUPLICATE // reprint of an existing receipt
+}
+
+enum ReceiptType {
+  SALE // standard sale receipt
+  RETURN // return/refund receipt
+  COMBINED // merged from multiple receipts
+  DUPLICATE // copy of original
+}
+
+enum SupplierStatus {
+  ACTIVE
+  INACTIVE
+}
+
+enum PurchaseStatus {
+  DRAFT // created, not yet ordered
+  ORDERED // sent to supplier, awaiting delivery
+  PARTIAL // partially received
+  RECEIVED // fully received
+  CANCELLED // cancelled
+}
+
+enum PurchasePaymentStatus {
+  UNPAID
+  PARTIAL
+  PAID
+}
+
+// ── Branch ────────────────────────────────────────────────────────────────────
+// Defined first — everything else references it
+
+model Branch {
+  id        String   @id @default(cuid())
+  name      String
+  code      String   @unique
+  address   String?
+  phone     String?
+  email     String?
+  isActive  Boolean  @default(true)
+  isDefault Boolean  @default(false)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  users             User[]
+  products          Product[]
+  categories        Category[]
+  orders            Order[]
+  expenses          Expense[]
+  customers         Customer[]
+  stocks            Stock[]
+  expenseCategories ExpenseCategory[]
+  mpesaTransactions MpesaTransaction[]
+  layaways          Layaway[]
+  receipts          Receipt[]
+  suppliers         Supplier[]
+  purchases         Purchase[]
+}
+
+// ── Auth ──────────────────────────────────────────────────────────────────────
+
+model User {
+  id            String   @id
+  name          String
+  email         String   @unique
+  role          UserRole @default(CASHIER)
+  emailVerified Boolean  @default(false)
+  image         String?
+  isActive      Boolean  @default(true)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  // null = ADMIN (global), required for MANAGER + CASHIER
+  branchId String?
+  branch   Branch? @relation(fields: [branchId], references: [id])
+
+  sessions      Session[]
+  accounts      Account[]
+  orders        Order[]
+  expenses      Expense[]
+  activityLogs  ActivityLog[]
+  notifications Notification[]
+  layaways      Layaway[]
+
+  username        String?
+  displayUsername String?
+  receipts        Receipt[]
+  voidedReceipts  Receipt[]  @relation("ReceiptVoidedBy")
+  stockLogs       StockLog[]
+  purchases       Purchase[]
+
+  @@unique([username])
+  @@map("user")
+}
+
+model Session {
+  id        String   @id
+  expiresAt DateTime
+  token     String   @unique
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  ipAddress String?
+  userAgent String?
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  role     String?
+  isActive Boolean?
+
+  @@index([userId])
+  @@map("session")
+}
+
+model Account {
+  id                    String    @id
+  accountId             String
+  providerId            String
+  userId                String
+  user                  User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  accessToken           String?
+  refreshToken          String?
+  idToken               String?
+  accessTokenExpiresAt  DateTime?
+  refreshTokenExpiresAt DateTime?
+  scope                 String?
+  password              String?
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+
+  @@index([userId])
+  @@map("account")
+}
+
+model Verification {
+  id         String   @id
+  identifier String
+  value      String
+  expiresAt  DateTime
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@index([identifier])
+  @@map("verification")
+}
+
+// ── Products & Categories ─────────────────────────────────────────────────────
+
+model Category {
+  id        String   @id @default(cuid())
+  name      String
+  color     String?
+  branchId  String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  branch   Branch?   @relation(fields: [branchId], references: [id], onDelete: Cascade)
+  products Product[]
+
+  // name unique per branch
+  @@unique([name, branchId])
+}
+
+model Product {
+  id               String   @id @default(cuid())
+  name             String
+  sku              String
+  barcode          String?
+  price            Float
+  lastPrice        Float    @default(0)
+  costPrice        Float    @default(0)
+  costPriceInclTax Float    @default(0) // ← new: cost price inclusive of tax
+  purchaseTaxRate  Float    @default(0) // tax rate % applied to purchase price
+  imageUrl         String?
+  isActive         Boolean  @default(true)
+  discountRate     Float    @default(0)
+  taxRate          Float    @default(0)
+  branchId         String?
+  categoryId       String?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  branch        Branch?        @relation(fields: [branchId], references: [id], onDelete: Cascade)
+  category      Category?      @relation(fields: [categoryId], references: [id])
+  orderItems    OrderItem[]
+  stock         Stock?
+  layawayItems  LayawayItem[]
+  purchaseItems PurchaseItem[]
+
+  // SKU unique per branch
+  @@unique([sku, branchId])
+}
+
+// ── Orders ────────────────────────────────────────────────────────────────────
+
+model Order {
+  id          String      @id @default(cuid())
+  orderNumber String
+  status      OrderStatus @default(PENDING)
+  subtotal    Float
+  discount    Float       @default(0)
+  tax         Float       @default(0)
+  total       Float
+  amountPaid  Float? // Total amount paid
+  change      Float? // Change given
+  note        String?
+  branchId    String?
+  userId      String?
+  customerId  String?
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+
+  branch   Branch?     @relation(fields: [branchId], references: [id])
+  user     User?       @relation(fields: [userId], references: [id])
+  customer Customer?   @relation(fields: [customerId], references: [id])
+  items    OrderItem[]
+  payment  Payment?
+  receipt  Receipt?
+
+  @@unique([orderNumber, branchId])
+}
+
+model OrderItem {
+  id          String @id @default(cuid())
+  orderId     String
+  productId   String
+  productName String
+  sku         String
+  quantity    Int
+  unitPrice   Float
+  total       Float
+
+  order   Order   @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  product Product @relation(fields: [productId], references: [id])
+}
+
+model Payment {
+  id        String   @id @default(cuid())
+  orderId   String   @unique
+  // method     PaymentMethod
+  amount    Float
+  // mpesaRef   String?
+  // mpesaPhone String?
+  createdAt DateTime @default(now())
+
+  order         Order          @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  splitPayments SplitPayment[]
+}
+
+model SplitPayment {
+  id         String        @id @default(cuid())
+  paymentId  String
+  method     PaymentMethod
+  amount     Float
+  mpesaRef   String?
+  mpesaPhone String?
+  createdAt  DateTime      @default(now())
+
+  payment Payment @relation(fields: [paymentId], references: [id], onDelete: Cascade)
+}
+
+// ── Inventory ─────────────────────────────────────────────────────────────────
+
+model Stock {
+  id         String   @id @default(cuid())
+  productId  String   @unique
+  branchId   String?
+  quantity   Int      @default(0)
+  lowStockAt Int      @default(10)
+  updatedAt  DateTime @updatedAt
+
+  branch  Branch?    @relation(fields: [branchId], references: [id])
+  product Product    @relation(fields: [productId], references: [id], onDelete: Cascade)
+  logs    StockLog[]
+}
+
+model StockLog {
+  id             String                @id @default(cuid())
+  stockId        String
+  productId      String
+  reason         StockAdjustmentReason
+  quantityBefore Int
+  quantityAfter  Int
+  change         Int
+  note           String?
+  createdAt      DateTime              @default(now())
+  userId         String?
+  user           User?                 @relation(fields: [userId], references: [id])
+
+  purchaseItemId String?
+
+  stock Stock @relation(fields: [stockId], references: [id], onDelete: Cascade)
+}
+
+// ── M-Pesa ────────────────────────────────────────────────────────────────────
+
+model MpesaTransaction {
+  id                 String   @id @default(cuid())
+  checkoutRequestId  String   @unique
+  merchantRequestId  String
+  phoneNumber        String
+  amount             Float
+  status             String   @default("PENDING")
+  mpesaReceiptNumber String?
+  resultCode         Int?
+  resultDesc         String?
+  orderId            String?
+  branchId           String?
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  branch Branch? @relation(fields: [branchId], references: [id])
+}
+
+// ── Expenses ──────────────────────────────────────────────────────────────────
+
+model ExpenseCategory {
+  id        String   @id @default(cuid())
+  name      String   @unique
+  color     String?
+  icon      String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  branchId String?
+
+  branch   Branch?   @relation(fields: [branchId], references: [id])
+  expenses Expense[]
+}
+
+model Expense {
+  id            String               @id @default(cuid())
+  title         String
+  amount        Float
+  date          DateTime
+  note          String?
+  receiptUrl    String?
+  paymentMethod ExpensePaymentMethod @default(CASH)
+  frequency     ExpenseFrequency     @default(ONE_TIME)
+  isRecurring   Boolean              @default(false)
+  branchId      String?
+  categoryId    String?
+  userId        String?
+  createdAt     DateTime             @default(now())
+  updatedAt     DateTime             @updatedAt
+
+  branch   Branch?          @relation(fields: [branchId], references: [id])
+  category ExpenseCategory? @relation(fields: [categoryId], references: [id])
+  user     User?            @relation(fields: [userId], references: [id])
+}
+
+// ── CRM ───────────────────────────────────────────────────────────────────────
+
+model Customer {
+  id        String   @id @default(cuid())
+  name      String
+  phone     String?
+  email     String?
+  address   String?
+  notes     String?
+  isActive  Boolean  @default(true)
+  points    Int      @default(0)
+  branchId  String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  branch    Branch?      @relation(fields: [branchId], references: [id])
+  orders    Order[]
+  pointLogs LoyaltyLog[]
+  layaways  Layaway[]
+  receipts  Receipt[]
+
+  // phone unique per branch
+  // email unique per branch
+  @@unique([phone, branchId])
+  @@unique([email, branchId])
+}
+
+model LoyaltyLog {
+  id          String         @id @default(cuid())
+  customerId  String
+  orderId     String?
+  points      Int
+  type        LoyaltyLogType
+  description String?
+  createdAt   DateTime       @default(now())
+
+  customer Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+}
+
+// ── System ────────────────────────────────────────────────────────────────────
+
+model SystemSetting {
+  id        String   @id @default(cuid())
+  key       String   @unique
+  value     String   @default("")
+  group     String
+  label     String
+  type      String   @default("text")
+  isSecret  Boolean  @default(false)
+  updatedAt DateTime @updatedAt
+  updatedBy String?
+}
+
+model Permission {
+  id          String   @id @default(cuid())
+  key         String   @unique
+  label       String
+  group       String
+  description String?
+  createdAt   DateTime @default(now())
+
+  rolePermissions RolePermission[]
+}
+
+model RolePermission {
+  id           String   @id @default(cuid())
+  role         String
+  permissionId String
+  createdAt    DateTime @default(now())
+
+  permission Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+
+  @@unique([role, permissionId])
+}
+
+model ActivityLog {
+  id          String         @id @default(cuid())
+  action      ActivityAction
+  entity      String
+  entityId    String?
+  entityLabel String?
+  meta        Json?
+  userId      String?
+  branchId    String? // which branch this activity belongs to
+  createdAt   DateTime       @default(now())
+
+  user User? @relation(fields: [userId], references: [id])
+}
+
+model Notification {
+  id        String           @id @default(cuid())
+  type      NotificationType
+  title     String
+  message   String
+  link      String?
+  read      Boolean          @default(false)
+  userId    String?
+  roles     String[]         @default([])
+  meta      Json?
+  createdAt DateTime         @default(now())
+
+  user User? @relation(fields: [userId], references: [id])
+
+  @@index([userId, read])
+  @@index([createdAt])
+}
+
+model Layaway {
+  id            String        @id @default(cuid())
+  orderNumber   String
+  branchId      String
+  customerId    String?
+  userId        String?
+  depositAmount Float
+  totalAmount   Float
+  balanceAmount Float
+  dueDate       DateTime // deadline to pay in full
+  status        LayawayStatus @default(ACTIVE)
+  notes         String?
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+
+  branch   Branch           @relation(fields: [branchId], references: [id])
+  customer Customer?        @relation(fields: [customerId], references: [id])
+  user     User?            @relation(fields: [userId], references: [id])
+  items    LayawayItem[]
+  payments LayawayPayment[]
+}
+
+model LayawayItem {
+  id          String @id @default(cuid())
+  layawayId   String
+  productId   String
+  productName String
+  sku         String
+  quantity    Int
+  unitPrice   Float
+  total       Float
+
+  layaway Layaway @relation(fields: [layawayId], references: [id], onDelete: Cascade)
+  product Product @relation(fields: [productId], references: [id])
+}
+
+model LayawayPayment {
+  id        String        @id @default(cuid())
+  layawayId String
+  amount    Float
+  method    PaymentMethod
+  mpesaRef  String?
+  note      String?
+  createdAt DateTime      @default(now())
+
+  layaway Layaway @relation(fields: [layawayId], references: [id], onDelete: Cascade)
+}
+
+model Receipt {
+  id            String        @id @default(cuid())
+  receiptNumber String
+  orderId       String?       @unique // null for combined receipts
+  branchId      String?
+  userId        String? // cashier who issued it
+  customerId    String?
+  type          ReceiptType   @default(SALE)
+  status        ReceiptStatus @default(ACTIVE)
+
+  // Financial snapshot at time of issue
+  subtotal Float
+  discount Float @default(0)
+  tax      Float @default(0)
+  total    Float
+
+  // Void tracking
+  voidedAt   DateTime?
+  voidedById String? // who voided it
+  voidReason String?
+
+  // Combine tracking
+  // Parent = the new combined receipt
+  // Children = the source receipts that were merged
+  parentReceiptId String? // set on source receipts when combined
+  combinedAt      DateTime?
+
+  // Duplicate tracking
+  originalReceiptId String? // set when this is a reprint
+
+  note          String?
+  printCount    Int       @default(0)
+  lastPrintedAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  order    Order?    @relation(fields: [orderId], references: [id])
+  branch   Branch?   @relation(fields: [branchId], references: [id])
+  user     User?     @relation(fields: [userId], references: [id])
+  customer Customer? @relation(fields: [customerId], references: [id])
+  voidedBy User?     @relation("ReceiptVoidedBy", fields: [voidedById], references: [id])
+
+  // Self-relations for combine/duplicate
+  parentReceipt   Receipt?  @relation("ReceiptCombine", fields: [parentReceiptId], references: [id])
+  childReceipts   Receipt[] @relation("ReceiptCombine")
+  originalReceipt Receipt?  @relation("ReceiptDuplicate", fields: [originalReceiptId], references: [id])
+  duplicates      Receipt[] @relation("ReceiptDuplicate")
+
+  // Line items snapshot (denormalised — receipts are immutable records)
+  items ReceiptItem[]
+
+  @@unique([receiptNumber, branchId])
+  @@index([branchId, createdAt])
+  @@index([status])
+}
+
+model ReceiptItem {
+  id          String  @id @default(cuid())
+  receiptId   String
+  productId   String?
+  productName String
+  sku         String
+  quantity    Int
+  unitPrice   Float
+  total       Float
+
+  receipt Receipt @relation(fields: [receiptId], references: [id], onDelete: Cascade)
+}
+
+model Supplier {
+  id          String         @id @default(cuid())
+  name        String
+  email       String?
+  phone       String?
+  address     String?
+  contactName String?
+  taxPin      String? // KRA PIN for Kenyan suppliers
+  notes       String?
+  status      SupplierStatus @default(ACTIVE)
+  branchId    String?
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+
+  branch    Branch?    @relation(fields: [branchId], references: [id])
+  purchases Purchase[]
+
+  @@index([branchId])
+}
+
+model Purchase {
+  id             String                @id @default(cuid())
+  purchaseNumber String
+  supplierId     String?
+  branchId       String?
+  userId         String? // who created it
+  status         PurchaseStatus        @default(DRAFT)
+  paymentStatus  PurchasePaymentStatus @default(UNPAID)
+  paymentMethod  ExpensePaymentMethod?
+
+  // Invoice details
+  invoiceNumber String? // supplier's invoice number
+  invoiceDate   DateTime?
+  expectedDate  DateTime? // expected delivery date
+  receivedDate  DateTime? // actual delivery date
+
+  // Financials
+  subtotal       Float @default(0) // sum of items (excl tax)
+  taxAmount      Float @default(0) // total tax on purchase
+  discountAmount Float @default(0) // order-level discount
+  shippingCost   Float @default(0)
+  total          Float @default(0) // final total (incl tax + shipping - discount)
+  amountPaid     Float @default(0)
+  balanceDue     Float @default(0)
+
+  notes     String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  supplier Supplier?         @relation(fields: [supplierId], references: [id])
+  branch   Branch?           @relation(fields: [branchId], references: [id])
+  user     User?             @relation(fields: [userId], references: [id])
+  items    PurchaseItem[]
+  payments PurchasePayment[]
+
+  @@unique([purchaseNumber, branchId])
+  @@index([branchId, status])
+}
+
+model PurchaseItem {
+  id              String  @id @default(cuid())
+  purchaseId      String
+  productId       String?
+  productName     String // snapshot — product may change
+  sku             String
+  orderedQty      Int // quantity ordered
+  receivedQty     Int     @default(0) // quantity actually received
+  unitCostExcl    Float // unit cost excluding tax
+  unitCostIncl    Float // unit cost including tax
+  taxRate         Float   @default(0)
+  taxAmount       Float   @default(0)
+  subtotal        Float // orderedQty × unitCostExcl
+  total           Float // orderedQty × unitCostIncl
+  // Update product cost price on receive?
+  updateCostPrice Boolean @default(true)
+
+  purchase Purchase @relation(fields: [purchaseId], references: [id], onDelete: Cascade)
+  product  Product? @relation(fields: [productId], references: [id])
+}
+
+model PurchasePayment {
+  id         String               @id @default(cuid())
+  purchaseId String
+  amount     Float
+  method     ExpensePaymentMethod
+  reference  String? // cheque no, mpesa ref, etc.
+  note       String?
+  paidAt     DateTime             @default(now())
+
+  purchase Purchase @relation(fields: [purchaseId], references: [id], onDelete: Cascade)
+}
